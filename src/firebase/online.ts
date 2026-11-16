@@ -261,7 +261,7 @@ export class OnlineMatch {
     if (!this.state || !this.doc) return 'Not connected';
     if (!this.isMyTurn()) return 'Not your turn';
     const err = validateAction(this.state, a); if (err) return err;
-    if (a.type === 'play') { const c = this.state.players[a.player].hand.find((x) => x.inst === a.inst); if (c) a = { ...a, reveal: { cardId: c.cardId, level: c.level } }; }
+    if (a.type === 'play') { const inst = a.inst; const c = this.state.players[a.player].hand.find((x) => x.inst === inst); if (c) a = { ...a, reveal: { cardId: c.cardId, level: c.level } }; }
     this.state = applyAction(this.state, a);
     this.pending.push(a);
     this.cb.onState(this.state, this.state.events, 'local');
