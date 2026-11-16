@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // A player's profile. Readable by any signed-in player (names, avatars, ratings and card
+    // levels are public so opponents can verify declared levels); writable only by its owner,
+    // and only within the economic bounds below.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if isOwner(uid) && validNewProfile();
+      allow update: if isOwner(uid) && validUpdate();
+      allow delete: if isOwner(uid);
+
+      match /matches/{mid} {
+        allow read, delete: if isOwner(uid);
+        allow create: if isOwner(uid) && request.resource.data.keys().hasAll(['mode', 'result', 'at']) && request.resource.data.at == request.time;
+        allow update: if false;
+      }
+    }
+
+    // Username registry: one document per lower-cased name, created with the profile.
+    match /usernames/{name} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && name == name.lower() && name.size() >= 3 && name.size() <= 16 && name.matches('^[a-z0-9_]+$');
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow update: if false;
+    }
+
+    function validNewProfile() {
+      let d = request.resource.data;
+      return d.uid == request.auth.uid
+        && d.username is string && d.usernameLower == d.username.lower()
+        && d.usernameLower.matches('^[a-z0-9_]{3,16}$')
+        && existsAfter(/databases/$(database)/documents/usernames/$(d.usernameLower))
+        && getAfter(/databases/$(database)/documents/usernames/$(d.usernameLower)).data.uid == request.auth.uid
+        && d.cinders == 500 && d.packs == 3 && d.rating == 1000
+        && d.wins == 0 && d.losses == 0 && d.botWins == 0 && d.packsOpened == 0
+        && d.createdAt == request.time;
+    }
+
+    function unchangedIdentity() {
+      let d = request.resource.data; let o = resource.data;
+      return d.uid == o.uid && d.username == o.username && d.usernameLower == o.usernameLower && d.createdAt == o.createdAt;
+    }
+
+    function sane() {
+      let d = request.resource.data;
+      return d.cinders is int && d.cinders >= 0 && d.packs is int && d.packs >= 0 && d.packs <= 500
+        && d.rating is int && d.rating >= 0 && d.rating <= 5000
+        && d.wins is int && d.losses is int && d.botWins is int && d.botLosses is int;
+    }
+
+    function ratingBounded() {
+      let d = request.resource.data; let o = resource.data;
+      return d.rating - o.rating <= 50 && o.rating - d.rating <= 50;
+    }
+
+    function lastRewardUnchanged() {
+      return request.resource.data.get('lastRewardAt', null) == resource.data.get('lastRewardAt', null);
+    }
+    function dailyUnchanged() {
+      return request.resource.data.get('dailyClaimedAt', null) == resource.data.get('dailyClaimedAt', null);
+    }
+
+    // Spending: cinders may only go down; packs may rise only by what was paid for (150 each).
+    function spending() {
+      let d = request.resource.data; let o = resource.data;
+      return d.cinders <= o.cinders && (d.packs - o.packs) * 150 <= (o.cinders - d.cinders)
+        && lastRewardUnchanged() && dailyUnchanged();
+    }
+
+    // Rewards (match results, dusting): bounded and throttled to one grant per 45 seconds.
+    function reward() {
+      let d = request.resource.data; let o = resource.data;
+      return d.lastRewardAt == request.time
+        && (o.get('lastRewardAt', null) == null || o.lastRewardAt + duration.value(45, 's') <= request.time)
+        && d.cinders - o.cinders <= 1500 && d.packs - o.packs <= 5
+        && dailyUnchanged();
+    }
+
+    // Daily vigil reward: once every 20 hours.
+    function daily() {
+      let d = request.resource.data; let o = resource.data;
+      return d.dailyClaimedAt == request.time
+        && (o.get('dailyClaimedAt', null) == null || o.dailyClaimedAt + duration.value(20, 'h') <= request.time)
+        && d.cinders - o.cinders <= 100 && d.packs - o.packs <= 1
+        && lastRewardUnchanged();
+    }
+
+    function validUpdate() {
+      return unchangedIdentity() && sane() && ratingBounded() && (spending() || reward() || daily());
+    }
+  }
+}

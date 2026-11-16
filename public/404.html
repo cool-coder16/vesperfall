@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Vesperfall</title>
+<script>
+  // GitHub Pages SPA fallback: preserve the deep link and bounce to the app root under the repo subpath.
+  var base = '/vesperfall/';
+  var path = location.pathname.slice(base.length);
+  sessionStorage.setItem('vf-redirect', path + location.search + location.hash);
+  location.replace(base);
+</script></head><body></body></html>
